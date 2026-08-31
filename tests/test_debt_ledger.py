@@ -30,6 +30,15 @@ class TestDebtLedgerPlugin(unittest.TestCase):
         self.assertEqual(self.db.get_user_name("10001"), "张三")
         self.assertEqual(self.db.get_user_name("10002"), "李四")
 
+        # 外号别名测试
+        self.db.set_user_alias("狗子", "10002", created_by="10001")
+        self.assertEqual(self.db.get_user_id_by_alias("狗子"), "10002")
+        self.assertIn("狗子", self.db.get_aliases_for_user("10002"))
+        all_aliases = self.db.get_all_aliases()
+        self.assertEqual(all_aliases.get("狗子"), "10002")
+        self.db.delete_alias("狗子")
+        self.assertIsNone(self.db.get_user_id_by_alias("狗子"))
+
     def test_request_lifecycle_and_acceptance(self):
         # 1. 发起出借申请：张三(10001) 借给 李四(10002) 100元
         ok, req, msg = self.request_manager.create_request(
@@ -205,6 +214,27 @@ class TestDebtLedgerPlugin(unittest.TestCase):
         )
         self.assertEqual(p13.intent_type, "SETTLE")
         self.assertEqual(p13.target_qq, "10001")
+
+        # 14. 无@仅凭外号记账（狗子 欠我 50 块）
+        p14 = NaturalLanguageParser.parse_message(
+            "狗子 欠我 50 块 打车费",
+            sender_id="10001",
+            known_aliases={"狗子": "10002"}
+        )
+        self.assertEqual(p14.intent_type, "LEND")
+        self.assertEqual(p14.target_qq, "10002")
+        self.assertEqual(p14.amount, 50.0)
+        self.assertIn("打车", p14.note)
+
+        # 15. 自然语言设置外号绑定
+        p15 = NaturalLanguageParser.parse_message(
+            "把 @李四 设置外号为 狗子",
+            mentioned_qq_list=["10002"],
+            sender_id="10001"
+        )
+        self.assertEqual(p15.intent_type, "BIND_ALIAS")
+        self.assertEqual(p15.target_qq, "10002")
+        self.assertEqual(p15.note, "狗子")
 
     def test_text_formatter(self):
         req = {

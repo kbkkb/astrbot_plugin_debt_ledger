@@ -111,6 +111,15 @@ class DebtLedgerPlugin(Star):
                     target_name = self.db.get_user_name(qm, qm)
                     return qm, target_name
 
+        # 3. 从文本参数中匹配已知外号/别名
+        if text_param:
+            alias_map = self.db.get_all_aliases()
+            sorted_aliases = sorted(alias_map.items(), key=lambda x: len(x[0]), reverse=True)
+            for alias_key, uid in sorted_aliases:
+                if alias_key and alias_key in text_param and str(uid) != bot_id and str(uid) != sender_id:
+                    target_name = self.db.get_user_name(uid, alias_key)
+                    return str(uid), target_name
+
         return "", ""
 
     def _extract_all_mentioned_qqs(self, event: AstrMessageEvent) -> List[str]:
@@ -455,7 +464,81 @@ class DebtLedgerPlugin(Star):
         resp_text = TextFormatter.format_pending_list(waiting_me, my_proposed, self.currency_symbol)
         yield event.plain_result(resp_text)
 
-    @filter.command("记账帮助", alias={"债务帮助", "账本帮助"})
+    # ==========================================
+    # 指令实现区：外号 / 别名管理
+    # ==========================================
+
+    @filter.command("别名", alias={"设置别名", "绑定别名", "外号", "设置外号", "绑定外号", "alias"})
+    async def cmd_set_alias(self, event: AstrMessageEvent, text: str = ""):
+        """
+        为用户绑定外号/别名：/别名 @某人 外号 或 /别名 123456 外号
+        """
+        sender_id, sender_name, group_id = self._get_sender_info(event)
+        target_id, target_name = self._extract_target_qq_and_name(event, text)
+
+        # 从 text 中提取外号名称（去除 @、QQ 号等）
+        alias_name = text.strip()
+        alias_name = re.sub(r"\[[Aa]t:\s*\d+\]", " ", alias_name)
+        alias_name = re.sub(r"@[^\s]+", " ", alias_name)
+        if target_id:
+            alias_name = alias_name.replace(target_id, " ")
+        alias_name = re.sub(r"^(?:为|叫|是)+", "", alias_name.strip()).strip()
+
+        if not target_id or not alias_name:
+            yield event.plain_result("❌ 请指定目标用户与外号，例如：/别名 @张三 狗子 或 /别名 123456 蛋蛋")
+            return
+
+        if len(alias_name) < 1 or len(alias_name) > 20:
+            yield event.plain_result("❌ 外号长度需在 1~20 个字符之间。")
+            return
+
+        self.db.set_user_alias(alias_name, target_id, created_by=sender_id, group_id=group_id)
+        yield event.plain_result(f"✅ 已成功将「{alias_name}」绑定给 {target_name}(QQ:{target_id})！\n💡 之后您可以直接说：@Bot {alias_name} 欠我 50")
+
+    @filter.command("删除别名", alias={"解绑别名", "删除外号", "解绑外号"})
+    async def cmd_delete_alias(self, event: AstrMessageEvent, alias: str = ""):
+        """
+        删除指定外号：/删除别名 外号
+        """
+        alias_clean = alias.strip().lstrip("@")
+        if not alias_clean:
+            yield event.plain_result("❌ 请输入要删除的外号，例如：/删除别名 狗子")
+            return
+
+        ok = self.db.delete_alias(alias_clean)
+        if ok:
+            yield event.plain_result(f"✅ 已成功删除外号「{alias_clean}」。")
+        else:
+            yield event.plain_result(f"❌ 未找到外号「{alias_clean}」，可能未绑定或已删除。")
+
+    @filter.command("别名列表", alias={"查看别名", "外号列表", "aliases"})
+    async def cmd_list_aliases(self, event: AstrMessageEvent, text: str = ""):
+        """
+        查看当前已绑定的所有外号：/别名列表
+        """
+        sender_id, sender_name, _ = self._get_sender_info(event)
+        target_id, target_name = self._extract_target_qq_and_name(event, text)
+
+        if target_id:
+            aliases = self.db.get_aliases_for_user(target_id)
+            if not aliases:
+                yield event.plain_result(f"💡 用户 {target_name}(QQ:{target_id}) 当前未绑定任何自定义外号。")
+            else:
+                yield event.plain_result(f"🏷️【{target_name} 的外号列表】\n• " + "\n• ".join(aliases))
+            return
+
+        with self.db._get_connection() as conn:
+            rows = conn.execute("SELECT alias, user_id FROM user_aliases ORDER BY created_at DESC LIMIT 30").fetchall()
+            if not rows:
+                yield event.plain_result("💡 当前尚未绑定任何自定义外号。您可以通过 /别名 @好友 外号 来添加。")
+                return
+            lines = ["🏷️【已绑定的外号/别名列表】\n━━━━━━━━━━━━━━"]
+            for r in rows:
+                u_name = self.db.get_user_name(r["user_id"], r["user_id"])
+                lines.append(f"🔹 「{r['alias']}」 ➔ {u_name}({r['user_id']})")
+            yield event.plain_result("\n".join(lines))
+
+    @filter.command("记账帮助", alias={"账本帮助", "借贷帮助", "debt_help"})
     async def cmd_help(self, event: AstrMessageEvent):
         """
         查看帮助与使用指南：/记账帮助
@@ -483,19 +566,21 @@ class DebtLedgerPlugin(Star):
             return
 
         # 检查是否包含借贷记账核心意图关键词
-        keywords = ["借给", "借出", "借入", "欠我", "我欠", "还给", "已还", "借了", "查账", "我的账单", "谁欠我", "同意", "拒绝", "撤销", "垫付"]
+        keywords = ["借给", "借出", "借入", "欠我", "我欠", "还给", "已还", "借了", "查账", "我的账单", "谁欠我", "同意", "拒绝", "撤销", "垫付", "还清", "结清", "两清", "外号", "别名"]
         if not any(kw in raw_str for kw in keywords):
             return
 
-        # 提取发送者、机器人自身及被 @ 的非机器人目标 QQ
+        # 提取发送者、机器人自身及被 @ 的非机器人目标 QQ 与外号
         sender_id, sender_name, group_id = self._get_sender_info(event)
         bot_id = self._get_bot_self_id(event)
         mentioned_qqs = self._extract_all_mentioned_qqs(event)
+        alias_map = self.db.get_all_aliases()
         parsed = NaturalLanguageParser.parse_message(
             raw_str,
             mentioned_qq_list=mentioned_qqs,
             sender_id=sender_id,
-            bot_id=bot_id
+            bot_id=bot_id,
+            known_aliases=alias_map
         )
 
         if parsed.intent_type == "UNKNOWN":
@@ -505,7 +590,16 @@ class DebtLedgerPlugin(Star):
         target_name = self.db.get_user_name(target_id, target_id) if target_id else ""
 
         # 意图分发
-        if parsed.intent_type == "LEND":
+        if parsed.intent_type == "BIND_ALIAS":
+            alias_name = parsed.note
+            if not target_id or not alias_name:
+                yield event.plain_result("❌ 绑定外号失败，请指定目标用户与外号，例如：@Bot 把 @张三 设置外号为 狗子")
+                return
+            self.db.set_user_alias(alias_name, target_id, created_by=sender_id, group_id=group_id)
+            yield event.plain_result(f"✅ 已成功为 {target_name}(QQ:{target_id}) 绑定外号「{alias_name}」！\n💡 之后您可以直接说：@Bot {alias_name} 欠我 50 进行记账。")
+            return
+
+        elif parsed.intent_type == "LEND":
             if not target_id:
                 yield event.plain_result("❌ 未检测到被借款人，请在语句中 @对方，例如：@Bot 我借给 @张三 100元 吃火锅")
                 return

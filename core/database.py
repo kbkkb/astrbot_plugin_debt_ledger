@@ -78,12 +78,24 @@ class DatabaseManager:
                 )
             """)
 
+            # 4. 用户外号 / 别名表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_aliases (
+                    alias TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    created_by TEXT DEFAULT '',
+                    group_id TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
+                )
+            """)
+
             # 创建索引提升多群检索与账单统计性能
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_records_lender ON records(lender_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_records_borrower ON records(borrower_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_records_confirmed ON records(confirmed_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_pending_target ON pending_requests(target_id, status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_pending_code ON pending_requests(req_code)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_alias_user ON user_aliases(user_id)")
             conn.commit()
 
     def update_user_name(self, user_id: str, nickname: str) -> None:
@@ -309,3 +321,74 @@ class DatabaseManager:
                 ORDER BY confirmed_at ASC, id ASC
             """, (str(user_id), str(user_id))).fetchall()
             return [dict(r) for r in rows]
+
+    # ==========================================
+    # 外号 / 别名管理
+    # ==========================================
+
+    def set_user_alias(self, alias: str, user_id: str, created_by: str = "", group_id: str = "") -> bool:
+        """设置或更新用户的外号/别名"""
+        alias_clean = alias.strip().lstrip("@")
+        if not alias_clean or not user_id:
+            return False
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO user_aliases (alias, user_id, created_by, group_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(alias) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    created_by = excluded.created_by,
+                    group_id = excluded.group_id,
+                    created_at = excluded.created_at
+            """, (alias_clean, str(user_id), str(created_by), str(group_id), now_str))
+            return True
+
+    def get_user_id_by_alias(self, alias: str) -> Optional[str]:
+        """根据外号查询对应的用户 QQ 号"""
+        alias_clean = alias.strip().lstrip("@")
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT user_id FROM user_aliases WHERE alias = ?", (alias_clean,)).fetchone()
+            if row:
+                return str(row["user_id"])
+            # 如果别名表中没有，尝试从 users 昵称表中精确或模糊查询
+            user_row = conn.execute("SELECT user_id FROM users WHERE nickname = ?", (alias_clean,)).fetchone()
+            if user_row:
+                return str(user_row["user_id"])
+            return None
+
+    def get_all_aliases(self) -> Dict[str, str]:
+        """获取所有已绑定的外号字典 {alias: user_id}，包含 users 表中缓存的昵称"""
+        alias_map: Dict[str, str] = {}
+        with self._get_connection() as conn:
+            # 1. 基础昵称映射
+            user_rows = conn.execute("SELECT user_id, nickname FROM users WHERE nickname != ''").fetchall()
+            for r in user_rows:
+                nick = str(r["nickname"]).strip()
+                uid = str(r["user_id"]).strip()
+                if nick and uid and len(nick) >= 2:
+                    alias_map[nick] = uid
+            # 2. 显式设置的外号映射（优先级更高）
+            alias_rows = conn.execute("SELECT alias, user_id FROM user_aliases").fetchall()
+            for r in alias_rows:
+                alias = str(r["alias"]).strip()
+                uid = str(r["user_id"]).strip()
+                if alias and uid:
+                    alias_map[alias] = uid
+        return alias_map
+
+    def get_aliases_for_user(self, user_id: str) -> List[str]:
+        """获取指定用户绑定的所有外号"""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT alias FROM user_aliases WHERE user_id = ? ORDER BY created_at ASC",
+                (str(user_id),)
+            ).fetchall()
+            return [str(r["alias"]) for r in rows]
+
+    def delete_alias(self, alias: str) -> bool:
+        """删除指定外号"""
+        alias_clean = alias.strip().lstrip("@")
+        with self._get_connection() as conn:
+            cur = conn.execute("DELETE FROM user_aliases WHERE alias = ?", (alias_clean,))
+            return cur.rowcount > 0

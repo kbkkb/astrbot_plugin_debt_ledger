@@ -98,7 +98,8 @@ class NaturalLanguageParser:
         mentioned_qq_list: Optional[List[str]] = None,
         sender_id: str = "",
         bot_id: str = "",
-        target_names: Optional[List[str]] = None
+        target_names: Optional[List[str]] = None,
+        known_aliases: Optional[Dict[str, str]] = None
     ) -> ParsedIntent:
         """
         解析用户自然语言消息
@@ -107,6 +108,7 @@ class NaturalLanguageParser:
         :param sender_id: 发送者 QQ
         :param bot_id: 机器人自身 QQ
         :param target_names: 目标用户可能包含的昵称
+        :param known_aliases: 已绑定的外号/别名字典 {alias: user_id}
         """
         text_clean = text.strip()
         # 排除机器人和发送者自己
@@ -115,8 +117,18 @@ class NaturalLanguageParser:
             if str(q).strip() and str(q).strip() != str(sender_id) and str(q).strip() != str(bot_id)
         ]
         target_qq = valid_targets[0] if valid_targets else ""
+        target_names_list = list(target_names or [])
 
-        # 如果没有通过 @ 提取到，尝试从文本中寻找非自身/非机器人的 QQ 号
+        # 如果没有通过 @ 提取到，尝试从文本中寻找已知外号/别名
+        if not target_qq and known_aliases:
+            sorted_aliases = sorted(known_aliases.items(), key=lambda x: len(x[0]), reverse=True)
+            for alias_key, uid in sorted_aliases:
+                if alias_key and alias_key in text_clean and str(uid) != str(sender_id) and str(uid) != str(bot_id):
+                    target_qq = str(uid)
+                    target_names_list.append(alias_key)
+                    break
+
+        # 如果还没有提取到，尝试从文本中寻找非自身/非机器人的 QQ 号
         if not target_qq:
             qq_matches = re.findall(r"(?<!\d)(\d{5,12})(?!\d)", text_clean)
             for qm in qq_matches:
@@ -125,6 +137,17 @@ class NaturalLanguageParser:
                     break
 
         ignore_qqs = list(set([str(sender_id), str(bot_id), str(target_qq)] + valid_targets))
+
+        # 0. 外号 / 别名绑定意图 (如 @Bot 把 @张三 设置外号为 狗子 / 绑定别名 @张三 狗子)
+        alias_bind_match = re.search(r"(?:设置外号|绑定外号|设置别名|绑定别名|外号为|别名为|外号叫|别名叫)\s*[:：为叫]?\s*([^\s,，。！？]+)", text_clean)
+        if alias_bind_match and target_qq:
+            alias_name = alias_bind_match.group(1).strip()
+            return ParsedIntent(
+                intent_type="BIND_ALIAS",
+                target_qq=target_qq,
+                note=alias_name,
+                raw_text=text_clean
+            )
 
         # 1. 帮助意图
         if re.search(r"^(?:记账帮助|怎么记账|记账使用说明|记账指令|记账怎么用|账本帮助)$", text_clean):
