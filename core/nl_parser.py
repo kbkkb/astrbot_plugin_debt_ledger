@@ -22,44 +22,109 @@ class NaturalLanguageParser:
     精准提取用户 @机器人 对话中的意图、目标 QQ、金额、事由及单号。
     """
 
-    # 金额提取正则 (如 100, 50.5, 30元, 100.00块, 50块钱)
-    AMOUNT_PATTERN = re.compile(r"(?<!\d)(\d+(?:\.\d{1,2})?)\s*(?:元|块钱|块|rmb|RMB|￥|¥)?(?!\d)")
     # 单号提取正则 (如 #101, 101, 单号101)
     REQ_CODE_PATTERN = re.compile(r"(?:#|单号|编号)?\s*([0-9]{3,6})")
 
     @classmethod
-    def extract_amount_and_note(cls, text: str) -> Tuple[float, str]:
-        """从文本中提取金额并清洗出事由备注"""
-        # 寻找匹配的金额
-        matches = list(cls.AMOUNT_PATTERN.finditer(text))
-        if not matches:
-            return 0.0, text.strip()
+    def extract_amount_and_note(
+        cls,
+        text: str,
+        ignore_qqs: Optional[List[str]] = None,
+        target_names: Optional[List[str]] = None
+    ) -> Tuple[float, str]:
+        """
+        从文本中精准提取金额并清洗出事由备注。
+        会自动过滤已知 QQ 号、@ 标签以及无意义的连接词。
+        """
+        ignore_qqs = [str(q).strip() for q in (ignore_qqs or []) if str(q).strip()]
+        target_names = [str(n).strip() for n in (target_names or []) if str(n).strip()]
 
-        # 优先选取最符合语义的金额项
-        selected_match = matches[0]
-        amount_val = float(selected_match.group(1))
+        # 1. 过滤消息格式中的 At 标签及括号里的 QQ 号，防止误当做交易金额
+        cleaned = re.sub(r"\[[Aa]t:\s*\d+\]", " ", text)
+        cleaned = re.sub(r"@[\w\u4e00-\u9fa5\s]+\(\s*\d+\s*\)", " ", cleaned)
+        cleaned = re.sub(r"@\d+", " ", cleaned)
 
-        # 从原文中剔除金额部分，剩余部分作为事由备注
-        start, end = selected_match.span()
-        note = (text[:start] + " " + text[end:]).strip()
-        # 清理多余介词和标点
-        note = re.sub(r"^(?:用于|因为|事由|备注|理由|为了|买|去|吃|喝|喝的|吃的|打车|的)+", "", note).strip()
-        note = re.sub(r"[，。！？,!?~]+", " ", note).strip()
+        for q in ignore_qqs:
+            if q:
+                cleaned = re.sub(rf"(?<!\d){re.escape(q)}(?!\d)", " ", cleaned)
+
+        # 2. 优先匹配紧跟在借贷动词后的金额（如 欠我33, 借给100, 借了50, 还了20, 垫付30）
+        verb_amount_match = re.search(
+            r"(?:欠我|欠了我|欠|借给|借出|借了|借入|还给|还了|已还|垫付|付了|借)\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块钱|块|rmb|RMB|￥|¥)?",
+            cleaned
+        )
+        amount_val = 0.0
+        raw_note = cleaned
+
+        if verb_amount_match:
+            amount_val = float(verb_amount_match.group(1))
+            start, end = verb_amount_match.span()
+            raw_note = (cleaned[:start] + " " + cleaned[end:]).strip()
+        else:
+            # 匹配明确带货币单位的金额（如 33元, 50.5块, 100块钱, ¥50）
+            unit_match = re.search(r"(?<!\d)(\d+(?:\.\d{1,2})?)\s*(?:元|块钱|块|rmb|RMB|￥|¥)", cleaned)
+            if unit_match:
+                amount_val = float(unit_match.group(1))
+                start, end = unit_match.span()
+                raw_note = (cleaned[:start] + " " + cleaned[end:]).strip()
+            else:
+                # 匹配常规纯数字（限制整数部分不超过 6 位，彻底排除 7-12 位的 QQ 号）
+                num_matches = list(re.finditer(r"(?<!\d)(\d+(?:\.\d{1,2})?)(?!\d)", cleaned))
+                valid_matches = [m for m in num_matches if len(m.group(1).split(".")[0]) <= 6]
+                if valid_matches:
+                    m = valid_matches[0]
+                    amount_val = float(m.group(1))
+                    start, end = m.span()
+                    raw_note = (cleaned[:start] + " " + cleaned[end:]).strip()
+
+        # 3. 清理备注中的 @ 提及、人名、动词及标点
+        note = re.sub(r"@\S+", " ", raw_note)
+        for name in target_names:
+            if name:
+                note = note.replace(name, " ")
+
+        note = re.sub(
+            r"(?:我借给|我借出|借给|借出给|转借给|借了|欠我|欠了我|欠我钱|我向|我跟|我从|向|我欠|我欠了|欠了|我还给|我还了|已还给|还清给|还款给|还给|转账给|归还给|已还|帮|垫付|垫了|垫付了|付了|买了|给我|给你|给|向|从|用于|因为|事由|备注|理由|为了|的|钱)+",
+            " ",
+            note
+        )
+        note = re.sub(r"[，。！？,!?~@()（）\[\]\s]+", " ", note).strip()
         return amount_val, note
 
     @classmethod
     def parse_message(
         cls,
         text: str,
-        mentioned_qq_list: Optional[List[str]] = None
+        mentioned_qq_list: Optional[List[str]] = None,
+        sender_id: str = "",
+        bot_id: str = "",
+        target_names: Optional[List[str]] = None
     ) -> ParsedIntent:
         """
         解析用户自然语言消息
-        :param text: 消息纯文本（已过滤掉@Bot自身）
-        :param mentioned_qq_list: 消息中额外 @到的非机器人 QQ 列表（按顺序）
+        :param text: 消息纯文本
+        :param mentioned_qq_list: 消息中被 @ 的非机器人 QQ 列表
+        :param sender_id: 发送者 QQ
+        :param bot_id: 机器人自身 QQ
+        :param target_names: 目标用户可能包含的昵称
         """
         text_clean = text.strip()
-        target_qq = mentioned_qq_list[0] if mentioned_qq_list else ""
+        # 排除机器人和发送者自己
+        valid_targets = [
+            str(q).strip() for q in (mentioned_qq_list or [])
+            if str(q).strip() and str(q).strip() != str(sender_id) and str(q).strip() != str(bot_id)
+        ]
+        target_qq = valid_targets[0] if valid_targets else ""
+
+        # 如果没有通过 @ 提取到，尝试从文本中寻找非自身/非机器人的 QQ 号
+        if not target_qq:
+            qq_matches = re.findall(r"(?<!\d)(\d{5,12})(?!\d)", text_clean)
+            for qm in qq_matches:
+                if qm != str(sender_id) and qm != str(bot_id):
+                    target_qq = qm
+                    break
+
+        ignore_qqs = list(set([str(sender_id), str(bot_id), str(target_qq)] + valid_targets))
 
         # 1. 帮助意图
         if re.search(r"^(?:记账帮助|怎么记账|记账使用说明|记账指令|记账怎么用|账本帮助)$", text_clean):
@@ -103,9 +168,7 @@ class NaturalLanguageParser:
             r"(?:我还给|我还了|已还给|还清给|还款给|还给|转账给|归还给|已还)"
         )
         if repay_pattern.search(text_clean):
-            amt, note = cls.extract_amount_and_note(text_clean)
-            # 清理匹配词
-            note = repay_pattern.sub("", note).strip()
+            amt, note = cls.extract_amount_and_note(text_clean, ignore_qqs=ignore_qqs, target_names=target_names)
             return ParsedIntent(
                 intent_type="REPAY",
                 target_qq=target_qq,
@@ -119,8 +182,7 @@ class NaturalLanguageParser:
             r"(?:我向|我跟|我从|向).+(?:借了|借入|借)|(?:我欠|我欠了|欠了)"
         )
         if borrow_pattern.search(text_clean):
-            amt, note = cls.extract_amount_and_note(text_clean)
-            note = re.sub(r"(?:我向|我跟|我从|向|借了|借入|借|我欠|我欠了|欠了)", "", note).strip()
+            amt, note = cls.extract_amount_and_note(text_clean, ignore_qqs=ignore_qqs, target_names=target_names)
             return ParsedIntent(
                 intent_type="BORROW",
                 target_qq=target_qq,
@@ -134,8 +196,7 @@ class NaturalLanguageParser:
             r"(?:我借给|我借出|借给|借出给|转借给|借了)|(?:欠我|欠了我|欠我钱)|(?:帮).+(?:垫付|垫了|垫付了|付了|买了)"
         )
         if lend_pattern.search(text_clean):
-            amt, note = cls.extract_amount_and_note(text_clean)
-            note = re.sub(r"(?:我借给|我借出|借给|借出给|转借给|借了|欠我|欠了我|欠我钱|帮|垫付|垫了|垫付了|付了|买了)", "", note).strip()
+            amt, note = cls.extract_amount_and_note(text_clean, ignore_qqs=ignore_qqs, target_names=target_names)
             return ParsedIntent(
                 intent_type="LEND",
                 target_qq=target_qq,

@@ -165,6 +165,28 @@ class TestDebtLedgerPlugin(unittest.TestCase):
         p9 = NaturalLanguageParser.parse_message("记账帮助")
         self.assertEqual(p9.intent_type, "HELP")
 
+        # 10. @Bot @目标 欠我33 / 带 QQ 号与 At 标签场景
+        p10 = NaturalLanguageParser.parse_message(
+            "[At:1457589185] [At:1606732762] 欠我33",
+            mentioned_qq_list=["1457589185", "1606732762"],
+            sender_id="905746960",
+            bot_id="1457589185"
+        )
+        self.assertEqual(p10.intent_type, "LEND")
+        self.assertEqual(p10.target_qq, "1606732762")
+        self.assertEqual(p10.amount, 33.0)
+        self.assertEqual(p10.note, "")
+
+        # 11. @昵称(QQ) 欠我33
+        p11 = NaturalLanguageParser.parse_message(
+            "@你的心是氢气做的吗(1606732762) 欠我33",
+            sender_id="905746960",
+            bot_id="1457589185"
+        )
+        self.assertEqual(p11.intent_type, "LEND")
+        self.assertEqual(p11.target_qq, "1606732762")
+        self.assertEqual(p11.amount, 33.0)
+
     def test_text_formatter(self):
         req = {
             "req_code": "101",

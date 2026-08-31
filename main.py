@@ -56,6 +56,23 @@ class DebtLedgerPlugin(Star):
     # 辅助方法：提取事件中的发送者、群号与被 @ 的目标 QQ
     # ==========================================
 
+    def _get_bot_self_id(self, event: AstrMessageEvent) -> str:
+        """获取当前机器人自身的 QQ/平台 ID"""
+        try:
+            if hasattr(event, "get_self_id") and callable(event.get_self_id):
+                bot_id = str(event.get_self_id() or "").strip()
+                if bot_id:
+                    return bot_id
+        except Exception:
+            pass
+        try:
+            bot_id = str(getattr(event.message_obj, "self_id", "") or "").strip()
+            if bot_id:
+                return bot_id
+        except Exception:
+            pass
+        return str(getattr(self.context, "self_id", "") or "").strip()
+
     def _get_sender_info(self, event: AstrMessageEvent) -> Tuple[str, str, str]:
         """返回 (sender_id, sender_name, group_id)"""
         sender_id = str(event.get_sender_id() or "").strip()
@@ -70,14 +87,15 @@ class DebtLedgerPlugin(Star):
         """
         从消息组件或文本参数中智能提取被@的目标 QQ 与昵称
         """
-        self_id = str(getattr(self.context, "self_id", "") or "")
+        bot_id = self._get_bot_self_id(event)
+        sender_id = str(event.get_sender_id() or "").strip()
 
         # 1. 优先从消息组件中的 At 提取
         if hasattr(event, "message_obj") and hasattr(event.message_obj, "message"):
             for comp in event.message_obj.message:
                 if isinstance(comp, At):
                     qq = str(getattr(comp, "qq", "") or getattr(comp, "target", "") or getattr(comp, "user_id", "")).strip()
-                    if qq and qq != self_id:
+                    if qq and qq != bot_id and qq != sender_id:
                         name = str(getattr(comp, "name", "") or getattr(comp, "display", "") or "").strip()
                         if not name:
                             name = self.db.get_user_name(qq, qq)
@@ -87,23 +105,24 @@ class DebtLedgerPlugin(Star):
 
         # 2. 从文本参数中正则匹配 QQ 号 (5-12位数字)
         if text_param:
-            qq_match = re.search(r"(?<!\d)(\d{5,12})(?!\d)", text_param)
-            if qq_match:
-                target_qq = qq_match.group(1)
-                target_name = self.db.get_user_name(target_qq, target_qq)
-                return target_qq, target_name
+            qq_matches = re.findall(r"(?<!\d)(\d{5,12})(?!\d)", text_param)
+            for qm in qq_matches:
+                if qm != bot_id and qm != sender_id:
+                    target_name = self.db.get_user_name(qm, qm)
+                    return qm, target_name
 
         return "", ""
 
     def _extract_all_mentioned_qqs(self, event: AstrMessageEvent) -> List[str]:
-        """提取消息中所有非机器人自身被@的 QQ 列表"""
-        self_id = str(getattr(self.context, "self_id", "") or "")
+        """提取消息中所有非机器人自身且非发送者本人的被 @ 用户 QQ 列表"""
+        bot_id = self._get_bot_self_id(event)
+        sender_id = str(event.get_sender_id() or "").strip()
         qq_list = []
         if hasattr(event, "message_obj") and hasattr(event.message_obj, "message"):
             for comp in event.message_obj.message:
                 if isinstance(comp, At):
                     qq = str(getattr(comp, "qq", "") or getattr(comp, "target", "") or getattr(comp, "user_id", "")).strip()
-                    if qq and qq != self_id and qq not in qq_list:
+                    if qq and qq != bot_id and qq != sender_id and qq not in qq_list:
                         qq_list.append(qq)
         return qq_list
 
@@ -123,7 +142,10 @@ class DebtLedgerPlugin(Star):
             yield event.plain_result("❌ 请 @你要借给的好友 或 输入其QQ号，例如：/借出 @张三 100 晚餐AA")
             return
 
-        amt, note = NaturalLanguageParser.extract_amount_and_note(text)
+        bot_id = self._get_bot_self_id(event)
+        amt, note = NaturalLanguageParser.extract_amount_and_note(
+            text, ignore_qqs=[sender_id, target_id, bot_id], target_names=[target_name]
+        )
         if amt <= 0.001:
             yield event.plain_result("❌ 请提供有效的借出金额，例如：/借出 @张三 100 晚餐AA")
             return
@@ -166,7 +188,10 @@ class DebtLedgerPlugin(Star):
             yield event.plain_result("❌ 请 @出借人 或 输入其QQ号，例如：/借入 @李四 50 垫付车费")
             return
 
-        amt, note = NaturalLanguageParser.extract_amount_and_note(text)
+        bot_id = self._get_bot_self_id(event)
+        amt, note = NaturalLanguageParser.extract_amount_and_note(
+            text, ignore_qqs=[sender_id, target_id, bot_id], target_names=[target_name]
+        )
         if amt <= 0.001:
             yield event.plain_result("❌ 请提供有效的借入金额，例如：/借入 @李四 50 垫付车费")
             return
@@ -209,7 +234,10 @@ class DebtLedgerPlugin(Star):
             yield event.plain_result("❌ 请 @收款人 或 输入其QQ号，例如：/还款 @张三 100 微信已转")
             return
 
-        amt, note = NaturalLanguageParser.extract_amount_and_note(text)
+        bot_id = self._get_bot_self_id(event)
+        amt, note = NaturalLanguageParser.extract_amount_and_note(
+            text, ignore_qqs=[sender_id, target_id, bot_id], target_names=[target_name]
+        )
         if amt <= 0.001:
             yield event.plain_result("❌ 请提供有效的还款金额，例如：/还款 @张三 100 微信已转")
             return
@@ -407,14 +435,20 @@ class DebtLedgerPlugin(Star):
         if not any(kw in raw_str for kw in keywords):
             return
 
-        # 提取被 @ 的非机器人目标 QQ
+        # 提取发送者、机器人自身及被 @ 的非机器人目标 QQ
+        sender_id, sender_name, group_id = self._get_sender_info(event)
+        bot_id = self._get_bot_self_id(event)
         mentioned_qqs = self._extract_all_mentioned_qqs(event)
-        parsed = NaturalLanguageParser.parse_message(raw_str, mentioned_qqs)
+        parsed = NaturalLanguageParser.parse_message(
+            raw_str,
+            mentioned_qq_list=mentioned_qqs,
+            sender_id=sender_id,
+            bot_id=bot_id
+        )
 
         if parsed.intent_type == "UNKNOWN":
             return
 
-        sender_id, sender_name, group_id = self._get_sender_info(event)
         target_id = parsed.target_qq
         target_name = self.db.get_user_name(target_id, target_id) if target_id else ""
 
