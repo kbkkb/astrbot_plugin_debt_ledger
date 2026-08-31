@@ -1,0 +1,27 @@
+{
+  "timeout_seconds": {
+    "type": "int",
+    "description": "借款/还款申请的有效确认等待超时时间（秒，默认 600 秒即 10 分钟）",
+    "default": 600
+  },
+  "currency_symbol": {
+    "type": "string",
+    "description": "账本显示的货币符号（默认 '¥'）",
+    "default": "¥"
+  },
+  "enable_natural_language": {
+    "type": "bool",
+    "description": "是否开启 @机器人 自然语言智能记账与查账交互（如：@Bot 我借给@某人 50元 奶茶）",
+    "default": true
+  },
+  "enable_llm_tool": {
+    "type": "bool",
+    "description": "是否注册 LLM Function Calling 原生工具（供大模型理解复杂借贷对话）",
+    "default": true
+  },
+  "max_single_amount": {
+    "type": "float",
+    "description": "单笔借贷/还款允许记录的最大金额限制（防止误输入天价金额，默认 1000000）",
+    "default": 1000000.0
+  }
+}

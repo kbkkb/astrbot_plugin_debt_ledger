@@ -1,0 +1,6 @@
+name: astrbot_plugin_debt_ledger
+display_name: 聊天记账与双人债务管理
+desc: 支持指令与自然语言@Bot双人借贷记账插件。支持借款/还款双向申请、被申请人双方确认生效、精确到秒的流水日志记录，并基于QQ号实现跨群统一汇总。
+author: eskyfun
+version: 1.0.0
+astrbot_version: ">=4.0"
