@@ -187,6 +187,25 @@ class TestDebtLedgerPlugin(unittest.TestCase):
         self.assertEqual(p11.target_qq, "1606732762")
         self.assertEqual(p11.amount, 33.0)
 
+        # 12. 收到还款 / @张三 还了我 33 元
+        p12 = NaturalLanguageParser.parse_message(
+            "@张三 还了我 33 元",
+            mentioned_qq_list=["10001"],
+            sender_id="10002"
+        )
+        self.assertEqual(p12.intent_type, "RECEIVE_REPAY")
+        self.assertEqual(p12.target_qq, "10001")
+        self.assertEqual(p12.amount, 33.0)
+
+        # 13. 一键还清 / 结清 @张三
+        p13 = NaturalLanguageParser.parse_message(
+            "我还清了 @张三 微信已转",
+            mentioned_qq_list=["10001"],
+            sender_id="10002"
+        )
+        self.assertEqual(p13.intent_type, "SETTLE")
+        self.assertEqual(p13.target_qq, "10001")
+
     def test_text_formatter(self):
         req = {
             "req_code": "101",

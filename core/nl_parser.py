@@ -163,9 +163,31 @@ class NaturalLanguageParser:
         ) and target_qq:
             return ParsedIntent(intent_type="QUERY_PAIR", target_qq=target_qq, raw_text=text_clean)
 
-        # 8. 还款记录 (我已还给对方 / 记录还款)
+        # 8. 一键还清 / 结清意图 (如 我还清了 @张三 / 结清 @张三)
+        if re.search(r"(?:还清|结清|两清)", text_clean) and target_qq:
+            amt, note = cls.extract_amount_and_note(text_clean, ignore_qqs=ignore_qqs, target_names=target_names)
+            return ParsedIntent(
+                intent_type="SETTLE",
+                target_qq=target_qq,
+                amount=amt,
+                note=note or "结清全部欠款",
+                raw_text=text_clean
+            )
+
+        # 9. 债权人记录收到还款 (如 @张三 还了我 33 元 / 收到 @张三 还款 50)
+        if re.search(r"(?:还了我|还我|收到.+还款|收到了.+还款)", text_clean) and target_qq:
+            amt, note = cls.extract_amount_and_note(text_clean, ignore_qqs=ignore_qqs, target_names=target_names)
+            return ParsedIntent(
+                intent_type="RECEIVE_REPAY",
+                target_qq=target_qq,
+                amount=amt,
+                note=note,
+                raw_text=text_clean
+            )
+
+        # 10. 债务人主动还款 (如 我还给 @张三 50 块 微信已转)
         repay_pattern = re.compile(
-            r"(?:我还给|我还了|已还给|还清给|还款给|还给|转账给|归还给|已还)"
+            r"(?:我还给|我还了|已还给|还款给|还给|转账给|归还给|已还|还款)"
         )
         if repay_pattern.search(text_clean):
             amt, note = cls.extract_amount_and_note(text_clean, ignore_qqs=ignore_qqs, target_names=target_names)

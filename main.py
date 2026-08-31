@@ -268,6 +268,58 @@ class DebtLedgerPlugin(Star):
         resp_text = TextFormatter.format_request_created(req_data, self.currency_symbol)
         yield event.plain_result(resp_text)
 
+    @filter.command("还清", alias={"结清", "两清", "settle", "clear"})
+    async def cmd_settle(self, event: AstrMessageEvent, text: str = ""):
+        """
+        一键发起结清全部欠款申请：/还清 @某人 [备注]
+        """
+        sender_id, sender_name, group_id = self._get_sender_info(event)
+        target_id, target_name = self._extract_target_qq_and_name(event, text)
+
+        if not target_id:
+            yield event.plain_result("❌ 请 @你要还清欠款的好友，例如：/还清 @张三 微信已转")
+            return
+
+        # 查两人当前实时净欠款
+        summary = self.ledger_service.calculate_pair_debt(sender_id, target_id, sender_name, target_name)
+        # net_balance > 0 说明 target 欠 sender
+        # net_balance < 0 说明 sender 欠 target
+        debt_i_owe = -summary["net_balance"]
+        if debt_i_owe <= 0.001:
+            if summary["net_balance"] > 0:
+                yield event.plain_result(f"💡 当前是 {target_name} 净欠您 {self.currency_symbol}{summary['net_balance']:.2f}，无需由您发起还清。")
+            else:
+                yield event.plain_result(f"💡 您与 {target_name} 当前账目已两清，无任何待还欠款。")
+            return
+
+        bot_id = self._get_bot_self_id(event)
+        _, note = NaturalLanguageParser.extract_amount_and_note(
+            text, ignore_qqs=[sender_id, target_id, bot_id], target_names=[target_name]
+        )
+        if not note:
+            note = "结清全部欠款"
+
+        ok, req_data, msg = self.request_manager.create_request(
+            proposer_id=sender_id,
+            proposer_name=sender_name,
+            target_id=target_id,
+            target_name=target_name,
+            lender_id=target_id,
+            borrower_id=sender_id,
+            amount=debt_i_owe,
+            record_type="REPAY",
+            note=note,
+            origin_group_id=group_id,
+            timeout_seconds=self.timeout_seconds
+        )
+
+        if not ok or not req_data:
+            yield event.plain_result(f"❌ 发起还清失败: {msg}")
+            return
+
+        resp_text = TextFormatter.format_request_created(req_data, self.currency_symbol)
+        yield event.plain_result(resp_text)
+
     # ==========================================
     # 指令实现区：同意 / 拒绝 / 撤销
     # ==========================================
@@ -512,6 +564,51 @@ class DebtLedgerPlugin(Star):
                 yield event.plain_result(TextFormatter.format_request_created(req_data, self.currency_symbol))
             else:
                 yield event.plain_result(f"❌ 发起还款失败: {msg}")
+
+        elif parsed.intent_type == "RECEIVE_REPAY":
+            if not target_id:
+                yield event.plain_result("❌ 未检测到还款人，请在语句中 @对方，例如：@Bot @张三 还了我 50元")
+                return
+            if parsed.amount <= 0.001:
+                yield event.plain_result("❌ 未检测到还款金额，请说明金额，例如：@Bot @张三 还了我 50元")
+                return
+            ok, req_data, msg = self.request_manager.create_request(
+                proposer_id=sender_id, proposer_name=sender_name,
+                target_id=target_id, target_name=target_name,
+                lender_id=sender_id, borrower_id=target_id,
+                amount=parsed.amount, record_type="REPAY",
+                note=parsed.note, origin_group_id=group_id,
+                timeout_seconds=self.timeout_seconds
+            )
+            if ok and req_data:
+                yield event.plain_result(TextFormatter.format_request_created(req_data, self.currency_symbol))
+            else:
+                yield event.plain_result(f"❌ 发起还款记录失败: {msg}")
+
+        elif parsed.intent_type == "SETTLE":
+            if not target_id:
+                yield event.plain_result("❌ 请在语句中 @你要结清账目的人，例如：@Bot 我还清了 @张三")
+                return
+            summary = self.ledger_service.calculate_pair_debt(sender_id, target_id, sender_name, target_name)
+            debt_i_owe = -summary["net_balance"]
+            if debt_i_owe <= 0.001:
+                if summary["net_balance"] > 0:
+                    yield event.plain_result(f"💡 当前是 {target_name} 净欠您 {self.currency_symbol}{summary['net_balance']:.2f}，无需发起还清。")
+                else:
+                    yield event.plain_result(f"💡 您与 {target_name} 当前账目已两清，无任何待还欠款。")
+                return
+            ok, req_data, msg = self.request_manager.create_request(
+                proposer_id=sender_id, proposer_name=sender_name,
+                target_id=target_id, target_name=target_name,
+                lender_id=target_id, borrower_id=sender_id,
+                amount=debt_i_owe, record_type="REPAY",
+                note=parsed.note or "结清全部欠款", origin_group_id=group_id,
+                timeout_seconds=self.timeout_seconds
+            )
+            if ok and req_data:
+                yield event.plain_result(TextFormatter.format_request_created(req_data, self.currency_symbol))
+            else:
+                yield event.plain_result(f"❌ 发起还清失败: {msg}")
 
         elif parsed.intent_type == "ACCEPT":
             ok, req_data, summary, msg = self.request_manager.accept_request(
