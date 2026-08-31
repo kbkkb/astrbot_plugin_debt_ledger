@@ -34,10 +34,14 @@ class TestDebtLedgerPlugin(unittest.TestCase):
         self.db.set_user_alias("狗子", "10002", created_by="10001")
         self.assertEqual(self.db.get_user_id_by_alias("狗子"), "10002")
         self.assertIn("狗子", self.db.get_aliases_for_user("10002"))
-        all_aliases = self.db.get_all_aliases()
+        all_aliases = self.db.get_all_aliases(include_external=False)
         self.assertEqual(all_aliases.get("狗子"), "10002")
         self.db.delete_alias("狗子")
         self.assertIsNone(self.db.get_user_id_by_alias("狗子"))
+
+        # 跨插件记忆桥接器测试
+        from core.memory_bridge import MemoryBridge
+        self.assertIsInstance(MemoryBridge.get_all_external_aliases(), dict)
 
     def test_request_lifecycle_and_acceptance(self):
         # 1. 发起出借申请：张三(10001) 借给 李四(10002) 100元

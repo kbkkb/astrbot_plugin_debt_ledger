@@ -538,6 +538,29 @@ class DebtLedgerPlugin(Star):
                 lines.append(f"🔹 「{r['alias']}」 ➔ {u_name}({r['user_id']})")
             yield event.plain_result("\n".join(lines))
 
+    @filter.command("同步记忆", alias={"导入外号", "同步外号", "sync_memory"})
+    async def cmd_sync_memory(self, event: AstrMessageEvent):
+        """
+        跨插件同步《天使之忆》、《天使之眼》等记录的外号与名片：/同步记忆
+        """
+        from .core.memory_bridge import MemoryBridge
+        angel_mem = MemoryBridge.extract_from_angel_memory()
+        angel_eye = MemoryBridge.extract_from_angel_eye()
+        persona = MemoryBridge.extract_from_lzpersona()
+        all_ext = MemoryBridge.get_all_external_aliases()
+
+        lines = [
+            "🧠【跨插件记忆外号同步结果】",
+            "━━━━━━━━━━━━━━",
+            f"🔹 天使之忆 (Angel Memory)：发现 {len(angel_mem)} 条实体称呼/外号",
+            f"🔹 天使之眼 (Angel Eye)：发现 {len(angel_eye)} 条群名片/昵称",
+            f"🔹 画像插件 (Persona)：发现 {len(persona)} 条用户画像昵称",
+            f"🔹 跨插件去重汇总：共接入 {len(all_ext)} 条可免@识别的外号",
+            "━━━━━━━━━━━━━━",
+            "✨ 同步就绪！您现在可以直接用上述外号 @Bot 发起借贷或查账（如 @Bot 狗子 欠我 50）。"
+        ]
+        yield event.plain_result("\n".join(lines))
+
     @filter.command("记账帮助", alias={"账本帮助", "借贷帮助", "debt_help"})
     async def cmd_help(self, event: AstrMessageEvent):
         """

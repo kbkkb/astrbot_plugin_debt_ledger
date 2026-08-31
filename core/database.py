@@ -357,18 +357,28 @@ class DatabaseManager:
                 return str(user_row["user_id"])
             return None
 
-    def get_all_aliases(self) -> Dict[str, str]:
-        """获取所有已绑定的外号字典 {alias: user_id}，包含 users 表中缓存的昵称"""
+    def get_all_aliases(self, include_external: bool = True) -> Dict[str, str]:
+        """获取所有已绑定的外号字典 {alias: user_id}，包含外部天使插件记忆与 users 缓存"""
         alias_map: Dict[str, str] = {}
+
+        # 1. 外部天使插件记忆（天使之忆、天使之眼、画像等）
+        if include_external:
+            try:
+                from .memory_bridge import MemoryBridge
+                ext = MemoryBridge.get_all_external_aliases()
+                alias_map.update(ext)
+            except Exception:
+                pass
+
         with self._get_connection() as conn:
-            # 1. 基础昵称映射
+            # 2. 基础昵称映射
             user_rows = conn.execute("SELECT user_id, nickname FROM users WHERE nickname != ''").fetchall()
             for r in user_rows:
                 nick = str(r["nickname"]).strip()
                 uid = str(r["user_id"]).strip()
                 if nick and uid and len(nick) >= 2:
                     alias_map[nick] = uid
-            # 2. 显式设置的外号映射（优先级更高）
+            # 3. 显式设置的外号映射（最高优先级）
             alias_rows = conn.execute("SELECT alias, user_id FROM user_aliases").fetchall()
             for r in alias_rows:
                 alias = str(r["alias"]).strip()
