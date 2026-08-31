@@ -23,5 +23,10 @@
     "type": "float",
     "description": "单笔借贷/还款允许记录的最大金额限制（防止误输入天价金额，默认 1000000）",
     "default": 1000000.0
+  },
+  "allow_self_debt_direct_record": {
+    "type": "bool",
+    "description": "是否允许主动认欠款直接入账（免对方确认）。开启后，记录向他人借款/自己欠款时直接入库生效；记录他人欠我钱仍然需要对方确认",
+    "default": false
   }
 }

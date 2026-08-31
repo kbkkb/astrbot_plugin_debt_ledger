@@ -35,6 +35,7 @@ class DebtLedgerPlugin(Star):
         self.enable_nl = bool(self.config.get("enable_natural_language", True))
         self.enable_llm_tool = bool(self.config.get("enable_llm_tool", True))
         self.max_single_amount = float(self.config.get("max_single_amount", 1000000.0))
+        self.allow_self_debt_direct = bool(self.config.get("allow_self_debt_direct_record", False))
 
         # 持久化数据库初始化
         try:
@@ -209,7 +210,35 @@ class DebtLedgerPlugin(Star):
             yield event.plain_result(f"❌ 单笔金额超出上限（最大允许 {self.currency_symbol}{self.max_single_amount:.2f}）。")
             return
 
-        # 记录发起方向目标借入 (Lender=Target, Borrower=Sender)
+        if self.allow_self_debt_direct:
+            # 开启免确认开关：主动认欠款直接记账入库 (Lender=Target, Borrower=Sender)
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.ledger_service.record_confirmed_transaction(
+                lender_id=target_id,
+                lender_name=target_name,
+                borrower_id=sender_id,
+                borrower_name=sender_name,
+                amount=amt,
+                record_type="BORROW",
+                note=note,
+                origin_group_id=group_id,
+                created_at=now_str,
+                confirmed_at=now_str
+            )
+            summary = self.ledger_service.calculate_pair_debt(sender_id, target_id, sender_name, target_name)
+            resp_text = TextFormatter.format_direct_borrow_recorded(
+                borrower_name=sender_name,
+                lender_name=target_name,
+                lender_id=target_id,
+                amount=amt,
+                note=note,
+                summary=summary,
+                currency=self.currency_symbol
+            )
+            yield event.plain_result(resp_text)
+            return
+
+        # 默认模式：发起向目标借入申请 (需要出借人同意)
         ok, req_data, msg = self.request_manager.create_request(
             proposer_id=sender_id,
             proposer_name=sender_name,
@@ -649,6 +678,35 @@ class DebtLedgerPlugin(Star):
             if parsed.amount <= 0.001:
                 yield event.plain_result("❌ 未检测到借入金额，请说明金额，例如：@Bot 我向 @李四 借了 50元")
                 return
+
+            if self.allow_self_debt_direct:
+                # 开启免确认开关：主动认欠款直接记账入库 (Lender=Target, Borrower=Sender)
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.ledger_service.record_confirmed_transaction(
+                    lender_id=target_id,
+                    lender_name=target_name,
+                    borrower_id=sender_id,
+                    borrower_name=sender_name,
+                    amount=parsed.amount,
+                    record_type="BORROW",
+                    note=parsed.note,
+                    origin_group_id=group_id,
+                    created_at=now_str,
+                    confirmed_at=now_str
+                )
+                summary = self.ledger_service.calculate_pair_debt(sender_id, target_id, sender_name, target_name)
+                resp_text = TextFormatter.format_direct_borrow_recorded(
+                    borrower_name=sender_name,
+                    lender_name=target_name,
+                    lender_id=target_id,
+                    amount=parsed.amount,
+                    note=parsed.note,
+                    summary=summary,
+                    currency=self.currency_symbol
+                )
+                yield event.plain_result(resp_text)
+                return
+
             ok, req_data, msg = self.request_manager.create_request(
                 proposer_id=sender_id, proposer_name=sender_name,
                 target_id=target_id, target_name=target_name,

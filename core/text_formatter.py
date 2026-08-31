@@ -87,6 +87,47 @@ class TextFormatter:
         return "\n".join(lines)
 
     @staticmethod
+    def format_direct_borrow_recorded(
+        borrower_name: str,
+        lender_name: str,
+        lender_id: str,
+        amount: float,
+        note: str,
+        summary: Optional[PairDebtSummary],
+        currency: str = "¥"
+    ) -> str:
+        """格式化主动认欠款直接入账卡片（免确认模式）"""
+        amt_str = f"{currency}{amount:.2f}"
+        note_str = note or "无"
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        lines = [
+            "📝【主动认欠款已直接入账】",
+            "━━━━━━━━━━━━━━",
+            f"🔹 债务人：{borrower_name}（主动记账）",
+            f"🔹 债权人：{lender_name} (QQ:{lender_id})",
+            f"🔹 借入金额：{amt_str}",
+            f"🔹 事由备注：{note_str}",
+            f"🔹 记账时间：{now_str}",
+            "━━━━━━━━━━━━━━"
+        ]
+
+        if summary:
+            lines.append("💰【双方最新实时对账结余】：")
+            net = summary.net_balance
+            a_name = summary.user_a_name
+            b_name = summary.user_b_name
+
+            if abs(net) < 0.001:
+                lines.append("✨ 双方账目已全部两清，互不相欠！")
+            elif net > 0:
+                lines.append(f"👉 当前 {b_name} 净欠 {a_name}：{currency}{net:.2f}")
+            else:
+                lines.append(f"👉 当前 {a_name} 净欠 {b_name}：{currency}{abs(net):.2f}")
+
+        return "\n".join(lines)
+
+    @staticmethod
     def format_pair_debt_summary(summary: PairDebtSummary, currency: str = "¥") -> str:
         """格式化双人实时对账汇总"""
         a_name = summary.user_a_name

@@ -128,6 +128,26 @@ class TestDebtLedgerPlugin(unittest.TestCase):
         summary = self.ledger_service.calculate_pair_debt("10001", "10002")
         self.assertEqual(summary.total_tx_count, 0)
 
+    def test_direct_borrow_recording(self):
+        """测试主动认欠款直接记账（免确认模式）"""
+        now_str = "2026-08-31 12:00:00"
+        # 李四(10002) 主动记录向 张三(10001) 借入 80 元 (Lender=10001, Borrower=10002)
+        tx = self.ledger_service.record_confirmed_transaction(
+            lender_id="10001",
+            lender_name="张三",
+            borrower_id="10002",
+            borrower_name="李四",
+            amount=80.0,
+            record_type="BORROW",
+            note="车费垫付",
+            origin_group_id="g1",
+            created_at=now_str,
+            confirmed_at=now_str
+        )
+        self.assertIsNotNone(tx)
+        summary = self.ledger_service.calculate_pair_debt("10001", "10002")
+        self.assertEqual(summary.net_balance, 80.00)
+
     def test_natural_language_parser(self):
         # 1. 借出解析
         p1 = NaturalLanguageParser.parse_message("我借给 @张三 100元 吃火锅", mentioned_qq_list=["10002"])

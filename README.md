@@ -179,6 +179,7 @@ git clone https://github.com/eskyfun/astrbot_plugin_debt_ledger.git
 | `enable_natural_language`| `bool` | `true` | 是否启用自然语言 @机器人 记账支持 |
 | `enable_llm_tool` | `bool` | `true` | 是否向大模型注册 Function Calling 工具 |
 | `max_single_amount` | `float`| `1000000.0`| 单笔允许记录的最大金额上限 |
+| `allow_self_debt_direct_record` | `bool` | `false` | **是否允许主动认欠款直接入账（免确认）**。<br>开启后，记录向他人借款/自己欠款时直接入库生效；记录他人欠我钱仍然必须对方确认。 |
 
 ---
 
