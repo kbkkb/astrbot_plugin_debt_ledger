@@ -534,12 +534,13 @@ class DebtLedgerPlugin(Star):
         amount: float,
         note: str = ""
     ) -> str:
-        """
-        发起借款、出借或还款申请。
-        :param action_type: 操作类型，可选 'LEND'(我借给对方/对方欠我), 'BORROW'(我向对方借/我欠对方), 'REPAY'(我还款给对方)
-        :param target_qq: 交易对方的 QQ 号
-        :param amount: 交易金额（正数）
-        :param note: 事由或备注说明
+        """发起借款、出借或还款申请。
+
+        Args:
+            action_type(string): 操作类型，可选 'LEND'(我借给对方/对方欠我), 'BORROW'(我向对方借/我欠对方), 'REPAY'(我还款给对方)
+            target_qq(string): 交易对方的 QQ 号
+            amount(number): 交易金额（正数）
+            note(string): 事由或备注说明
         """
         sender_id, sender_name, group_id = self._get_sender_info(event)
         target_name = self.db.get_user_name(target_qq, target_qq)
@@ -576,10 +577,11 @@ class DebtLedgerPlugin(Star):
         accept: bool,
         req_code: str = ""
     ) -> str:
-        """
-        同意或拒绝待确认的借贷/还款申请。
-        :param accept: True 表示同意入账，False 表示拒绝作废
-        :param req_code: 可选的申请单号（如 '101'），若为空则自动匹配最新一笔
+        """同意或拒绝待确认的借贷/还款申请。
+
+        Args:
+            accept(boolean): True 表示同意入账，False 表示拒绝作废
+            req_code(string): 可选的申请单号（如 '101'），若为空则自动匹配最新一笔
         """
         sender_id, sender_name, group_id = self._get_sender_info(event)
         if accept:
@@ -603,9 +605,10 @@ class DebtLedgerPlugin(Star):
         event: AstrMessageEvent,
         target_qq: str = ""
     ) -> str:
-        """
-        查询借贷账目对账单。
-        :param target_qq: 可选的交易对方 QQ 号。若填写则查询双人对账单；若为空则查询当前用户的全局借贷大盘。
+        """查询借贷账目对账单或全局借贷大盘。
+
+        Args:
+            target_qq(string): 可选的交易对方 QQ 号。若填写则查询双人对账单；若为空则查询当前用户的全局借贷大盘。
         """
         sender_id, sender_name, _ = self._get_sender_info(event)
         if target_qq:
